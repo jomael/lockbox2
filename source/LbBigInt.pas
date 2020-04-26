@@ -68,12 +68,17 @@ type
 { TLbBigInt }
 type
   TLbBigInt = class
-    protected {private}
+  private
+    function GetBase64Str : string;
+    procedure SetBase64Str(const Value: string);
+    procedure SetHexStr(const Value: string);
+    function GetASNTriplet: String;
+  protected {private}
       FI : LbInteger;
       procedure setSign(value : Boolean);
       function getSign : Boolean;
       function GetSize : integer;                                         {!!03}
-      function GetIntStr : string;
+      function GetHexStr : string;
       function GetIntBuf : pByte;
     public
       constructor Create(ALen : Integer);
@@ -84,6 +89,7 @@ type
       procedure Multiply(I2 : TLbBigInt);
       procedure Divide(I2 : TLbBigInt);
       procedure Modulus(I2 : TLbBigInt);
+      procedure GCD(I2 : TLbBigInt);
       function ModInv(Modulus : TLbBigInt) : Boolean;
       procedure PowerAndMod(Exponent : TLbBigInt; modulus : TLbBigInt);
 
@@ -102,8 +108,8 @@ type
       function IsEven : Boolean;
       function IsComposite(Iterations : Cardinal) : Boolean;
       function Abs(I2 : TLbBigInt) : ShortInt;
-      procedure ReverseBits;
-      procedure ReverseBytes;
+      procedure ReverseBits(WithTrim : Boolean = True);
+      procedure ReverseBytes(WithTrim : Boolean = True);
       function GetBit(bit : Integer) : Boolean;
       procedure Shr_(_shr : Integer);
       procedure Shl_(_shl : Integer);
@@ -136,16 +142,13 @@ type
       function ToBuffer(var Buf; BufLen : Integer) : integer;
       function GetByteValue( place : integer ) : Byte;
 
-      property Sign : Boolean
-        read getSign write setSign;
-      property Int : LbInteger
-        read FI;
-      property IntBuf : pByte
-        read GetIntBuf;
-      property IntStr : string
-        read GetIntStr;
-      property Size : integer                                             {!!03}
-        read GetSize;
+      property Sign : Boolean read getSign write setSign;
+      property Int : LbInteger read FI;
+      property IntBuf : pByte read GetIntBuf;
+      property IntStr : string read GetHexStr write SetHexStr;
+      property Size : integer read GetSize;
+      property Base64Str : string read GetBase64Str write SetBase64Str;
+      property ASNTriplet : String read GetASNTriplet;
 
 end;
 
@@ -164,23 +167,15 @@ const { misc local constants }
   cDEFAULT_USED          = 0;
   cAPPEND_ARRAY          = 0;
   cPREPEND_ARRAY         = 1;
-  cDEFAULT_MAX_PRECISION = 256;
 
 
 const { simple prime table }
   cTotalSimplePrimes      = (258 * 8);
-  cTotalSimpleBytePrimes  = 53;  { %80 elimination }
-  cTotalSimple2KPrimes    = 303;
   cSimplePrimesToCheck    = 2000;
 
 type
   pBiByteArray = ^TBiByteArray;
-  pBiWordArray = ^TBiWordArray;
-//  TBiByteArray = array[0..65535] of Byte;
   TBiByteArray = array[0..pred(maxint)] of Byte;
-  TBiWordArray = array[0..pred(maxint div 2 )] of word;
-const
-  cMaxBigIntSize = SizeOf( TByteArray );
 
 const
   { source :
@@ -539,7 +534,7 @@ begin
   end;
 end;
 { ------------------------------------------------------------------- }
-procedure LbBiVerify(var N1 : LbInteger);
+procedure LbBiVerify(var N1 : LbInteger; WithTrim : Boolean = True);
 begin
   { check to see that pointer points at data }
   if (not(assigned(N1.IntBuf.pBuf))) then
@@ -549,10 +544,13 @@ begin
   if (N1.dwUsed = 0) then
       raise Exception.Create(sBINoNumber);
 
-  LbBiTrimSigZeros(N1);  
+  if WithTrim then
+  begin
+    LbBiTrimSigZeros(N1);
+  end;
 end;
 { ------------------------------------------------------------------- }
-procedure LbBiFindLargestUsed(N1 : LbInteger; N2 : LbInteger; var count : integer); {!!03}
+procedure LbBiFindLargestUsed(N1 : LbInteger; N2 : LbInteger; out count : integer); {!!03}
 begin
   if (N1.dwUsed >= N2.dwUsed) then
     Count := N1.dwUsed
@@ -569,8 +567,7 @@ begin
   end;
 end;
 { ------------------------------------------------------------------- }
-procedure LbBiPrepare(N1 : LbInteger; N2 : LbInteger;
-                       var N3 : LbInteger);
+procedure LbBiPrepare(var N3 : LbInteger);
 begin
   { if pointer does not point at data then we make some }
   if (not(assigned(N3.IntBuf.pBuf))) then
@@ -852,7 +849,7 @@ var
 begin
   LbBiVerify(N1);
   LbBiVerify(N2);
-  LbBiPrepare(N1, N2, NOR);
+  LbBiPrepare(NOR);
 
   LbBiAddByte(NOR, cPREPEND_ARRAY, $00);
   LbBiFindLargestUsed(N1, N2, count);
@@ -894,7 +891,7 @@ var
 begin
   LbBiVerify(N1);
   LbBiVerify(N2);
-  LbBiPrepare(N1, N2, NXOR);
+  LbBiPrepare(NXOR);
 
   LbBiAddByte(NXOR, cPREPEND_ARRAY, $00);
   LbBiFindLargestUsed(N1, N2, count);
@@ -1015,11 +1012,9 @@ begin
   Borrow := 0;
   x := pred(N1.dwUsed);
   for cnt := 0 to x do begin
-    tmp := pBiByteArray(N1.IntBuf.pBuf)[cnt];
-    if (N2.dwUsed < succ(cnt)) then
-      tmp := tmp - Borrow
-    else
-      tmp := tmp - (pBiByteArray(N2.IntBuf.pBuf)[cnt] + Borrow);
+    tmp := pBiByteArray(N1.IntBuf.pBuf)[cnt] - Borrow;
+    if (N2.dwUsed >= succ(cnt)) then
+      tmp := tmp - pBiByteArray(N2.IntBuf.pBuf)[cnt];
 
     if (tmp < 0) then begin
       inc(tmp, cBYTE_POSSIBLE_VALUES);
@@ -1297,14 +1292,14 @@ end;
 { ------------------------------------------------------------------- }
 procedure LbBiDivByDigitBase(N1 : LbInteger; N2 : byte;
                               var quotient : LbInteger;
-                              var remainder : byte);
+                              out remainder : byte);
 var
   factor : byte;
   c : Integer;
   tmp : Integer;
   sigDivd : longint;
   lclQT : longint;
-  Carry : WORD;
+  Carry : longint;
   plc : integer;                                                          {!!03}  
   lclDVD : LbInteger;
   divisor : byte;
@@ -1387,7 +1382,7 @@ end;
 { ------------------------------------------------------------------- }
 procedure LbBiDivByDigit(N1 : LbInteger; N2 : byte;
                           var quotient : LbInteger;
-                          var remainder : byte);
+                          out remainder : byte);
 begin
   LbBiDivByDigitBase(N1, N2, quotient, remainder);
   quotient.bSign := N1.bSign;
@@ -1395,7 +1390,7 @@ end;
 { ------------------------------------------------------------------- }
 procedure LbBiDivByDigitInPlace(var N1 : LbInteger;
                                       N2 : byte;
-                                  var remainder : byte);
+                                  out remainder : byte);
 var
   tmp : LbInteger;
   precis : Integer;
@@ -2072,9 +2067,9 @@ begin
 
   LbBiVerify(u);
   LbBiVerify(v);
-  LbBiPrepare(u, v, u1);
-  LbBiPrepare(u, v, u2);
-  LbBiPrepare(u, v, GCD);
+  LbBiPrepare(u1);
+  LbBiPrepare(u2);
+  LbBiPrepare(GCD);
 
   LbBiClear(u1);
   LbBiClear(u2);
@@ -2176,7 +2171,7 @@ var
 begin
   LbBiVerify(e);
   LbBiVerify(_mod);
-  LbBiPrepare(e, _mod, d);
+  LbBiPrepare(d);
 
   LbBiInit(u, cUSE_DEFAULT_PRECISION);
   LbBiInit(v, cUSE_DEFAULT_PRECISION);
@@ -2200,6 +2195,31 @@ begin
     LbBiFree(a);
     LbBiFree(b);
     LbBiFree(gcd);
+  end;
+end;
+
+{ ------------------------------------------------------------------- }
+procedure LbGreatestCommonDivisor(u, v : TLbBigInt);
+var
+  localU, localV : TLbBigInt;
+begin
+  localU := nil;
+  localV := nil;
+  try
+    localV := TLbBigInt.Create(v.Size);
+    localV.Copy(v);
+
+    localU := TLbBigInt.Create(u.Size);
+    while not localV.IsZero do
+    begin
+      localU.Copy(u);
+      localU.Modulus(localV);
+      u.Copy(localV);
+      localV.Copy(localU);
+    end;
+  finally
+    localU.Free;
+    localV.Free;
   end;
 end;
 
@@ -2524,15 +2544,15 @@ begin
   LbBiCopyBigInt2Buf(FI, cPREPEND_ARRAY, @Buf, len);
 end;
 { ------------------------------------------------------------------- }
-procedure TLbBigInt.ReverseBits;
+procedure TLbBigInt.ReverseBits(WithTrim : Boolean);
 begin
-  LbBiVerify(FI);
+  LbBiVerify(FI, WithTrim);
   LbBiReverseBitsInPlace(FI);
 end;
 { ------------------------------------------------------------------- }
-procedure TLbBigInt.ReverseBytes;
+procedure TLbBigInt.ReverseBytes(WithTrim : Boolean);
 begin
-  LbBiVerify(FI);
+  LbBiVerify(FI, WithTrim);
   LbBiReverseBytesInPlace(FI);
 end;
 { ------------------------------------------------------------------- }
@@ -2603,9 +2623,62 @@ begin
   Result := FI.dwUsed;
 end;
 { ------------------------------------------------------------------- }
-function TLbBigInt.GetIntStr : string;
+procedure TLbBigInt.GCD(I2: TLbBigInt);
+begin
+  LbGreatestCommonDivisor(self, I2);
+end;
+{ ------------------------------------------------------------------- }
+function TLbBigInt.GetASNTriplet: String;
+const
+  INTEGER_TAG = '02';
+var
+  ReversedBigInt : TLbBigInt;
+begin
+  //the byte order in openSSL is reversed compared with lockbox
+  ReversedBigInt := TlbBigInt.Create(Size);
+  try
+    ReversedBigInt.Copy(self);
+    //insert a leading zero if the first bit is set
+    if ReversedBigInt.GetBit(ReversedBigInt.Size * 8 - 1) then
+    begin
+      ReversedBigInt.AppendByte(0); //do this before reversal
+    end;
+
+    ReversedBigInt.ReverseBytes(False); //don't trim the null byte
+    Result := INTEGER_TAG + ASN1HexSize(ReversedBigInt.Size) + ReversedBigInt.IntStr;
+  finally
+    ReversedBigInt.Free;
+  end;
+end;
+{ ------------------------------------------------------------------- }
+function TLbBigInt.GetBase64Str : string;
+begin
+  Result := BufferToBase64(IntBuf^, FI.dwUsed);
+end;
+{ ------------------------------------------------------------------- }
+procedure TLbBigInt.SetBase64Str(const Value: string);
+var
+  BufferSize : Cardinal;
+begin
+  Base64ToBuffer(Value, IntBuf^, BufferSize);
+  FI.dwUsed := BufferSize;
+  Trim;
+end;
+{ ------------------------------------------------------------------- }
+function TLbBigInt.GetHexStr : string;
 begin
   Result := BufferToHex(IntBuf^, FI.dwUsed);
+end;
+{ ------------------------------------------------------------------- }
+procedure TLbBigInt.SetHexStr(const Value: string);
+var
+  Buffer : array[Byte] of Byte;
+  BufferSize : Cardinal;
+begin
+  BufferSize := Length(Value) div 2;
+  HexToBuffer(Value, Buffer, BufferSize);
+  CopyBuffer(Buffer, BufferSize);
+  Trim;
 end;
 { ------------------------------------------------------------------- }
 function TLbBigInt.GetIntBuf : pByte;

@@ -32,11 +32,11 @@
 
 unit LbDSA;
   {-DSA signature component and key classes}
-                                                              
+
 interface
 
 uses
-{$IFDEF MSWINDOWS}
+{$IFNDEF FPC}
   Windows,
 {$ENDIF}
 {$IFDEF POSIX}
@@ -195,18 +195,12 @@ type
       procedure SignBuffer(const Buf; BufLen : Cardinal); override;
       procedure SignFile(const AFileName : string);  override;
       procedure SignStream(AStream : TStream); override;
-      procedure SignStringA(const AStr : AnsiString); override;
-      {$IFDEF UNICODE}
-      procedure SignStringW(const AStr : UnicodeString); override;
-      {$ENDIF}
+      procedure SignString(const AStr : RawByteString); override;
 
       function  VerifyBuffer(const Buf; BufLen : Cardinal) : Boolean; override;
       function  VerifyFile(const AFileName : string) : Boolean; override;
       function  VerifyStream(AStream : TStream) : Boolean; override;
-      function  VerifyStringA(const AStr : AnsiString) : Boolean; override;
-      {$IFDEF UNICODE}
-      function  VerifyStringW(const AStr : UnicodeString) : Boolean; override;
-      {$ENDIF}
+      function  VerifyString(const AStr : RawByteString) : Boolean; override;
 
       procedure Clear;
       function GeneratePQG : Boolean;
@@ -342,13 +336,8 @@ end;
 { -------------------------------------------------------------------------- }
 procedure TLbDSAParameters.SetQAsString(const Value : string);
   { set q to value represented by "big to little" hex string }
-var
-  Buf : TLbDSABlock;
 begin
-  FillChar(Buf, SizeOf(Buf), #0);
-  HexToBuffer(Value, Buf, SizeOf(Buf));
-  FQ.CopyBuffer(Buf, SizeOf(Buf));
-  FQ.Trim;
+  FQ.IntStr := Value;
 end;
 { -------------------------------------------------------------------------- }
 function TLbDSAParameters.GetGAsString : string;
@@ -359,13 +348,8 @@ end;
 { -------------------------------------------------------------------------- }
 procedure TLbDSAParameters.SetGAsString(const Value : string);
   { set g to value represented by "big to little" hex string }
-var
-  Buf : array[Byte] of Byte;
 begin
-  FillChar(Buf, SizeOf(Buf), #0);
-  HexToBuffer(Value, Buf, cLbAsymKeyBytes[FKeySize]);
-  FG.CopyBuffer(Buf, cLbAsymKeyBytes[FKeySize]);
-  FG.Trim;
+  FG.IntStr := Value;
 end;
 { -------------------------------------------------------------------------- }
 procedure TLbDSAParameters.CopyDSAParameters(aKey : TLbDSAParameters);
@@ -643,13 +627,8 @@ end;
 { -------------------------------------------------------------------------- }
 procedure TLbDSAPrivateKey.SetXAsString(const Value : string);
   { set x to value represented by "big to little" hex string }
-var
-  Buf : TLbDSABlock;
 begin
-  FillChar(Buf, SizeOf(Buf), #0);
-  HexToBuffer(Value, Buf, SizeOf(Buf));
-  FX.CopyBuffer(Buf, SizeOf(Buf));
-  FX.Trim;
+  FX.IntStr := Value;
 end;
 { -------------------------------------------------------------------------- }
 {!!.06}
@@ -693,7 +672,7 @@ begin
   if (Tag <> ASN1_TYPE_SEQUENCE) then
     raise Exception.Create(sDSAKeyBadKey);
 
-  ParseASN1(pInput, Max, FP);
+  KeySize := KeySizeFromBytes(ParseASN1(pInput, Max, FP));
   ParseASN1(pInput, Max, FQ);
   ParseASN1(pInput, Max, FG);
   ParseASN1(pInput, Max, FX);
@@ -741,13 +720,8 @@ end;
 { -------------------------------------------------------------------------- }
 procedure TLbDSAPublicKey.SetYAsString(const Value : string);
   { set y to value represented by "big to little" hex string }
-var
-  Buf : array[Byte] of Byte;
 begin
-  FillChar(Buf, SizeOf(Buf), #0);
-  HexToBuffer(Value, Buf, cLbAsymKeyBytes[FKeySize]);
-  FY.CopyBuffer(Buf, cLbAsymKeyBytes[FKeySize]);
-  FY.Trim;
+  FY.IntStr := Value;
 end;
 { -------------------------------------------------------------------------- }
 {!!.06}
@@ -791,7 +765,7 @@ begin
   if (Tag <> ASN1_TYPE_SEQUENCE) then
     raise Exception.Create(sDSAKeyBadKey);
 
-  ParseASN1(pInput, Max, FP);
+  KeySize := KeySizeFromBytes(ParseASN1(pInput, Max, FP));
   ParseASN1(pInput, Max, FQ);
   ParseASN1(pInput, Max, FG);
   ParseASN1(pInput, Max, FY);
@@ -1096,10 +1070,14 @@ end;
 procedure TLbDSA.SignFile(const AFileName : string);
   { generate DSA signature of file data }
 var
-  Digest : TSHA1Digest;
+  Stream : TStream;
 begin
-  FileHashSHA1(Digest, AFileName);
-  SignHash(Digest);
+  Stream := TFileStream.Create(AFileName, fmOpenRead);
+  try
+    SignStream(Stream);
+  finally
+    Stream.Free;
+  end;
 end;
 { -------------------------------------------------------------------------- }
 procedure TLbDSA.SignStream(AStream : TStream);
@@ -1111,25 +1089,11 @@ begin
   SignHash(Digest);
 end;
 { -------------------------------------------------------------------------- }
-procedure TLbDSA.SignStringA(const AStr : AnsiString);
+procedure TLbDSA.SignString(const AStr : RawByteString);
   { generate DSA signature of string data }
-var
-  Digest : TSHA1Digest;
 begin
-  StringHashSHA1A(Digest, AStr);
-  SignHash(Digest);
+  SignBuffer(AStr[1], Length(AStr));
 end;
-{ -------------------------------------------------------------------------- }
-{$IFDEF UNICODE}
-procedure TLbDSA.SignStringW(const AStr : UnicodeString);
-  { generate DSA signature of string data }
-var
-  Digest : TSHA1Digest;
-begin
-  StringHashSHA1W(Digest, AStr);
-  SignHash(Digest);
-end;
-{$ENDIF}
 { -------------------------------------------------------------------------- }
 function TLbDSA.VerifyBuffer(const Buf; BufLen : Cardinal) : Boolean;
   { verify DSA signature agrees with buffer data }
@@ -1143,10 +1107,14 @@ end;
 function TLbDSA.VerifyFile(const AFileName : string) : Boolean;
   { verify DSA signature agrees with file data }
 var
-  Digest : TSHA1Digest;
+  Stream : TStream;
 begin
-  FileHashSHA1(Digest, AFileName);
-  Result := VerifyHash(Digest);
+  Stream := TFileStream.Create(AFileName, fmOpenRead);
+  try
+    Result := VerifyStream(Stream);
+  finally
+    Stream.Free;
+  end;
 end;
 { -------------------------------------------------------------------------- }
 function TLbDSA.VerifyStream(AStream : TStream) : Boolean;
@@ -1158,24 +1126,10 @@ begin
   Result := VerifyHash(Digest);
 end;
 { -------------------------------------------------------------------------- }
-function TLbDSA.VerifyStringA(const AStr : AnsiString) : Boolean;
+function TLbDSA.VerifyString(const AStr : RawByteString) : Boolean;
   { verify DSA signature agrees with string data }
-var
-  Digest : TSHA1Digest;
 begin
-  StringHashSHA1A(Digest, AStr);
-  Result := VerifyHash(Digest);
+  Result := VerifyBuffer(AStr[1], Length(AStr));
 end;
-
-{$IFDEF UNICODE}
-function TLbDSA.VerifyStringW(const AStr : UnicodeString) : Boolean;
-  { verify DSA signature agrees with string data }
-var
-  Digest : TSHA1Digest;
-begin
-  StringHashSHA1W(Digest, AStr);
-  Result := VerifyHash(Digest);
-end;
-{$ENDIF}
 
 end.
